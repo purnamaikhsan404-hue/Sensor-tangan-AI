@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web AR Gesture Filter Like TikTok</title>
+    
+    <!-- Load Library MediaPipe & TensorFlowJS via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: sans-serif;
+        }
+
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Input Video Kamera (disembunyikan, di-render via Canvas) */
+        #webcam {
+            display: none;
+        }
+
+        /* Canvas Utama untuk Menampilkan Output Kamera + Efek */
+        #output-canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            /* Flip horizontal agar seperti cermin */
+            transform: scaleX(-1);
+        }
+
+        /* Teks Instruksi */
+        #instruction {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 20px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="container">
+        <div id="instruction">✌️ Tunjukkan 2 jari untuk efek love</div>
+        
+        <!-- Element Video Hidden -->
+        <video id="webcam" autoplay playsinline></video>
+        
+        <!-- Canvas untuk Output -->
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const instruction = document.getElementById('instruction');
+
+        // Pastikan ukuran canvas sesuai layar
+        function resizeCanvas() {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Variabel untuk animasi love
+        const heartImage = new Image();
+        heartImage.src = 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f1/Heart_coraz%C3%B3n.svg/1200px-Heart_coraz%C3%B3n.svg.png'; // Link gambar love (bisa diganti)
+        
+        let activeHearts = [];
+
+        // 1. LOGIK DETEKSI GESTUR (Mendeteksi ✌️)
+        function isVictoryGesture(landmarks) {
+            // Landmark Jari MediaPipe Hands:
+            // 8: Ujung Telunjuk, 6: Pangkal Telunjuk
+            // 12: Ujung Tengah, 10: Pangkal Tengah
+            // 16, 14, 20, 18: Manis & Kelingking
+
+            const indexUp = landmarks[8].y < landmarks[6].y;
+            const middleUp = landmarks[12].y < landmarks[10].y;
+            const ringDown = landmarks[16].y > landmarks[14].y;
+            const pinkyDown = landmarks[20].y > landmarks[18].y;
+
+            return indexUp && middleUp && ringDown && pinkyDown;
+        }
+
+        // 2. FUNGSI UNTUK PROSES HASIL DETEKSI AI
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // Tampilkan Gambar Kamera
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            // Cek jika tangan terdeteksi
+            if (results.multiHandLandmarks) {
+                let gestureDetected = false;
+
+                for (const landmarks of results.multiHandLandmarks) {
+                    // Cek Gestur
+                    if (isVictoryGesture(landmarks)) {
+                        gestureDetected = true;
+
+                        // Ambil koordinat ujung jari telunjuk sebagai titik pemicu
+                        const indexFingerTip = landmarks[8];
+                        
+                        // Konversi koordinat AI (0.0 - 1.0) ke koordinat Canvas (pixel)
+                        // Karena canvas di-flip horizontal, x perlu dibalik
+                        const x = (1 - indexFingerTip.x) * canvasElement.width;
+                        const y = indexFingerTip.y * canvasElement.height;
+
+                        // Tambahkan efek love baru jika gestur baru terdeteksi (opsional, untuk animasi)
+                        if (activeHearts.length < 1) { // Batasi 1 love per tangan
+                             activeHearts.push({
+                                x: x,
+                                y: y,
+                                size: 50,
+                                opacity: 1,
+                                time: Date.now()
+                             });
+                        } else {
+                            // Update posisi love yang sudah ada
+                            activeHearts[0].x = x;
+                            activeHearts[0].y = y - 50; // Sedikit di atas jari
+                        }
+                    }
+                }
+
+                if (!gestureDetected) {
+                     activeHearts = []; // Hapus love jika tangan tidak lagi peace
+                }
+            } else {
+                 activeHearts = []; // Hapus love jika tidak ada tangan
+            }
+
+            // 3. GAMBAR EFEK LOVE
+            for (let i = 0; i < activeHearts.length; i++) {
+                const heart = activeHearts[i];
+                const size = heart.size;
+                
+                canvasCtx.globalAlpha = heart.opacity;
+                // Ingat, canvas di-flip horizontal, saat menggambar kita harus menyesuaikan kembali
+                canvasCtx.drawImage(heartImage, (canvasElement.width - heart.x) - size/2, heart.y - size/2, size, size);
+                canvasCtx.globalAlpha = 1;
+            }
+
+            canvasCtx.restore();
+        }
+
+        // 4. INISIALISASI MEDIAPIPE HANDS
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        // 5. AKSES KAMERA
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: 1280,
+            height: 720
+        });
+
+        // Tampilkan loading saat kamera bersiap
+        instruction.innerText = 'Menghubungkan kamera...';
+
+        camera.start()
+            .then(() => {
+                instruction.innerText = '✌️ Tunjukkan 2 jari untuk efek love';
+            })
+            .catch(err => {
+                instruction.innerText = 'Gagal akses kamera. Pastikan pakai HTTPS atau localhost.';
+                console.error(err);
+            });
+    </script>
+</body>
+</html>
